@@ -76,15 +76,36 @@ class CourseVIEW(APIView):
     def post(self, request):
         global response_data
         if isinstance(response_data, dict) and response_data.get('admin'):
-            serializer = CourseSerializer(data=request.data)
-            if serializer.is_valid():
-                serializer.save()
-                # تحديث الحقل 'schedule_id' بعد حفظ البيانات
-                serializer.data['schedule_id'] = CoruseSchedules.objects.all().last().id
-                serializer.save()
+            data = request.data.get('courseData', {})
+            image= request.FILES.get('image')
+            course_data = data.get('course', {})
+            course_data['image'] = image
+            schedule_data = data.get('schedule', {})
+            
+            print("Received Data:", request.data)
+            print("Course Data:", course_data)
+            print("Schedule Data:", schedule_data)
+            
+            # Save schedule first
+            schedule_serializer = CourseSchedulesSerializer(data=schedule_data)
+            if schedule_serializer.is_valid():
+                schedule = schedule_serializer.save()
+            else:
+                print("Schedule Serializer Errors:", schedule_serializer.errors)  # Debug print
+                return Response(schedule_serializer.errors, status=400)
+            
+            # Save course with schedule_id
 
-                return Response(serializer.data, status=201)
-            return Response(serializer.errors, status=400)
+            course_data['schedule_id'] = schedule.id
+            print(course_data['image'])
+            course_serializer = CourseSerializer(data=course_data)
+            if course_serializer.is_valid():
+                course_serializer.save()
+                return Response(course_serializer.data, status=201)
+            else:
+                print("Course Serializer Errors:", course_serializer.errors)  # Debug print
+                return Response(course_serializer.errors, status=400)
+        
         return Response({"message": "The user is not authorized."}, status=403)
 
     def get(self, request):
@@ -126,7 +147,66 @@ class CourseVIEW(APIView):
             return Response(res)
         else:
             return Response({"message": "The user is not authenticated."})
-        
+
+class UpdateVIEW(APIView):
+    def get(self,request,pk):
+        global response_data
+        if response_data:
+            course = Courses.objects.filter(code=pk).first()
+            serializer = CourseSerializer(course)
+            courses_connect_tag = random.sample(CourseSerializer(Courses.objects.filter(tag=course.tag),many=True).data,3 if len(Courses.objects.filter(tag=course.tag)) >3 else len(Courses.objects.filter(tag=course.tag)))
+            for c in range(len(courses_connect_tag)):
+                if courses_connect_tag[c]['code'] == serializer.data['code']:
+                    courses_connect_tag.remove(courses_connect_tag[c])
+                    break
+            c =CoruseSchedules.objects.get(id=serializer.data['schedule_id'])
+            sc = CourseSchedulesSerializer(c,many=False)
+            response = serializer.data
+            response['schedule_id'] = sc.data
+            for pre in range(len(response['prerequisites'])):
+                response['prerequisites'][pre] = CourseSerializer(Courses.objects.get(code=response['prerequisites'][pre]),many=False).data
+            r = True if studentsReg.objects.filter(course_id=course.code,student_id=Students.objects.filter(user=User.objects.filter(username=response_data['user']['username']).first()).first()).first() != None else False
+            length = len(studentsReg.objects.filter(course_id=pk))
+            res = {'course':response,'registered':r,'courses_connect_tag':courses_connect_tag,'student_length':length}
+            return Response(res)
+        else:
+            return Response({"message": "The user is not authenticated."})
+    def put(self, request, pk):
+        global response_data
+        if isinstance(response_data, dict) and response_data.get('admin'):
+            data = request.data.get('courseData', {})
+            image = request.FILES.get('image')
+            course_data = data.get('course', {})
+            course_data['image'] = image
+            schedule_data = data.get('schedule', {})
+
+            # Retrieve the course object
+            course = Courses.objects.filter(code=pk).first()
+            if not course:
+                return Response({"message": "Course not found."}, status=404)
+
+            # Update the schedule first
+            schedule = CoruseSchedules.objects.filter(id=course.schedule_id).first()
+            if schedule:
+                schedule_serializer = CourseSchedulesSerializer(schedule, data=schedule_data)
+                if schedule_serializer.is_valid():
+                    schedule_serializer.save()
+                else:
+                    return Response(schedule_serializer.errors, status=400)
+            else:
+                return Response({"message": "Schedule not found."}, status=404)
+
+            # Update the course with the new schedule ID
+            course_data['schedule_id'] = schedule.id
+            course_serializer = CourseSerializer(course, data=course_data)
+            if course_serializer.is_valid():
+                course_serializer.save()
+                return Response(course_serializer.data, status=200)
+            else:
+                return Response(course_serializer.errors, status=400)
+
+        return Response({"message": "The user is not authorized."}, status=403)
+
 class CourseScheduleVIEW(APIView):
     def post(self, request):
         global response_data
@@ -154,6 +234,11 @@ class CoursesSelect(APIView):
         mutable_data = request.data.copy()
         mutable_data['student_id'] = user_student.id
         my_new_course = Courses.objects.get(code=request.data.get('course_id'))
+        for c in studentsReg.objects.filter(course_id=my_new_course):
+            if my_new_course in c.course_id.prerequisites:
+                break
+            if c == studentsReg.objects.filter(course_id=my_new_course).last():
+                return Response({'message':'You can\'t join in this course.'})
         for c in Courses.objects.all():
             if studentsReg.objects.filter(course_id = c.code,student_id = user_student.id):
                 if my_new_course.schedule_id.start_time == c.schedule_id.start_time: 

@@ -18,27 +18,32 @@ class StudentSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=255)
     password = serializers.CharField(write_only=True)
-class CourseSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Courses
-        fields = '__all__'
-    def create(self, validated_data):
-        instance = self.Meta.model(**validated_data)  
-        instance.save()
-        return instance
-        
-class StudentRegSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = studentsReg
-        fields = ['student_id', 'course_id']
+
 class CourseSchedulesSerializer(serializers.ModelSerializer):
     class Meta:
         model = CoruseSchedules
         fields = '__all__'
+
     def create(self, validated_data):
-        instance = self.Meta.model(**validated_data)  
+        instance = self.Meta.model(**validated_data)
         instance.save()
         return instance
+
+class CourseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Courses
+        fields = '__all__'
+
+    def create(self, validated_data):
+        instance = self.Meta.model(**validated_data)
+        instance.save()
+        return instance
+    
+class StudentRegSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = studentsReg
+        fields = ['student_id', 'course_id']
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
