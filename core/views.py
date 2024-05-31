@@ -1,17 +1,15 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from core.permissions import IsSuperUser
 from core.serializers import LoginSerializer, StudentRegSerializer, StudentSerializer,CourseSerializer,CourseSchedulesSerializer,NotificationSerializer
-from .models import CoruseSchedules, Courses,Students,studentsReg
+from .models import CoruseSchedules, Courses,Students,studentsReg,Notification,Prerequisties
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db.models import Q
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import permission_classes
-import random, time
-from datetime import datetime, timedelta, date
+import random
+import matplotlib.pyplot as plt
+import io
+import base64
 # from django.core.mail import send_mail
 response_data=''
 class Register(APIView):
@@ -49,9 +47,8 @@ class Login(APIView):
                 refresh = RefreshToken.for_user(user)
                 global response_data
                 access_token = str(refresh.access_token)
-                admin = True
-                if request.user.is_superuser is None :
-                    admin = False
+                admin = user.is_superuser
+                print(user.is_superuser)
                 response_data = {
                         'access_token': access_token,
                         'user': serializer.data,
@@ -81,7 +78,8 @@ class CourseVIEW(APIView):
             course_data = data.get('course', {})
             course_data['image'] = image
             schedule_data = data.get('schedule', {})
-            
+            prereqieste = course_data['prerequisites']
+
             print("Received Data:", request.data)
             print("Course Data:", course_data)
             print("Schedule Data:", schedule_data)
@@ -93,14 +91,22 @@ class CourseVIEW(APIView):
             else:
                 print("Schedule Serializer Errors:", schedule_serializer.errors)  # Debug print
                 return Response(schedule_serializer.errors, status=400)
-            
+            note= {'title':'Append','message':f'Append the {course_data.get("name")} course.'}
+            notification = NotificationSerializer(data=note)
+            if notification.is_valid():
+                notification.save()
             # Save course with schedule_id
-
+             
             course_data['schedule_id'] = schedule.id
             print(course_data['image'])
             course_serializer = CourseSerializer(data=course_data)
             if course_serializer.is_valid():
                 course_serializer.save()
+                if prereqieste!='':
+                    prereqiestes = Prerequisties.objects.create(
+                    course=Courses.objects.get(code=course_serializer.data['code']),
+                    course_prerequisite = Courses.objects.get(name=prereqieste),
+                    ).save()
                 return Response(course_serializer.data, status=201)
             else:
                 print("Course Serializer Errors:", course_serializer.errors)  # Debug print
@@ -171,32 +177,57 @@ class UpdateVIEW(APIView):
             return Response(res)
         else:
             return Response({"message": "The user is not authenticated."})
+    def delete(self,request,pk):
+        global response_data
+        if isinstance(response_data, dict) and response_data.get('admin'):
+            note= {'title':'Delete','message':f'Delete the {Courses.objects.get(code = pk).name} course.'}
+            notification = NotificationSerializer(data=note)
+            if notification.is_valid():
+                notification.save()
+
+                Courses.objects.get(code = pk).delete()
+                return Response({"message": "Delete The Course."}, status=400)
+            return Response({"message": "Error."}, status=404)
+
     def put(self, request, pk):
         global response_data
         if isinstance(response_data, dict) and response_data.get('admin'):
             data = request.data.get('courseData', {})
-            image = request.FILES.get('image')
+            print('Received data:', data)  # تأكد من البيانات المستلمة
+
             course_data = data.get('course', {})
-            course_data['image'] = image
             schedule_data = data.get('schedule', {})
+            
+            if not course_data or not schedule_data:
+                return Response({"message": "Invalid data."}, status=400)
 
-            # Retrieve the course object
-            course = Courses.objects.filter(code=pk).first()
-            if not course:
+            try:
+                course = Courses.objects.get(code=pk)
+            except Courses.DoesNotExist:
                 return Response({"message": "Course not found."}, status=404)
-
-            # Update the schedule first
-            schedule = CoruseSchedules.objects.filter(id=course.schedule_id).first()
-            if schedule:
-                schedule_serializer = CourseSchedulesSerializer(schedule, data=schedule_data)
-                if schedule_serializer.is_valid():
-                    schedule_serializer.save()
-                else:
-                    return Response(schedule_serializer.errors, status=400)
-            else:
+            
+            if 'name' not in course_data:
+                return Response({"message": "Missing 'name' in course data."}, status=400)
+            course.name = course_data['name']
+            course.description = course_data['description']
+            course.instractor = course_data['instractor']
+            course.capacity = course_data['capacity']
+            course.save()
+            try:
+                schedule = CoruseSchedules.objects.get(id=course.schedule_id.id)
+            except CoruseSchedules.DoesNotExist:
                 return Response({"message": "Schedule not found."}, status=404)
-
-            # Update the course with the new schedule ID
+            
+            schedule.days = schedule_data['days']
+            schedule.start_time = schedule_data['start_time']
+            schedule.end_time = schedule_data['end_time']
+            schedule.room_no = schedule_data['room_no']
+            schedule.save()
+            note= {'title':'Update','message':f'Update the {Courses.objects.get(code = pk).name} course.'}
+            notification = NotificationSerializer(data=note)
+            if notification.is_valid():
+                notification.save()
+            # تحديث الدورة بمعرف جدول الدورة المحدث
             course_data['schedule_id'] = schedule.id
             course_serializer = CourseSerializer(course, data=course_data)
             if course_serializer.is_valid():
@@ -206,7 +237,7 @@ class UpdateVIEW(APIView):
                 return Response(course_serializer.errors, status=400)
 
         return Response({"message": "The user is not authorized."}, status=403)
-
+    
 class CourseScheduleVIEW(APIView):
     def post(self, request):
         global response_data
@@ -234,11 +265,14 @@ class CoursesSelect(APIView):
         mutable_data = request.data.copy()
         mutable_data['student_id'] = user_student.id
         my_new_course = Courses.objects.get(code=request.data.get('course_id'))
-        for c in studentsReg.objects.filter(course_id=my_new_course):
+        for c in studentsReg.objects.filter(student_id=user_student,course_id=my_new_course):
             if my_new_course in c.course_id.prerequisites:
+                print(c)
                 break
             if c == studentsReg.objects.filter(course_id=my_new_course).last():
+                print(c)
                 return Response({'message':'You can\'t join in this course.'})
+        
         for c in Courses.objects.all():
             if studentsReg.objects.filter(course_id = c.code,student_id = user_student.id):
                 if my_new_course.schedule_id.start_time == c.schedule_id.start_time: 
@@ -281,7 +315,7 @@ class Search(APIView):
         global response_data
         if response_data:
             search_query = request.data.get('query')
-            courses = Courses.objects.filter(Q(name__icontains=search_query))
+            courses = Courses.objects.filter(Q(name__icontains=search_query) | Q(code__icontains=search_query) | Q(instractor__icontains=search_query))
             serializer = CourseSerializer(courses,many=True)
             response = []
             for s in range(len(serializer.data)):
@@ -291,7 +325,7 @@ class Search(APIView):
                 response.append(serializer.data[s])
             return Response(response,status=200)
         return Response({"message": "The user is not authenticated."}, status=401)
-class Notification(APIView):
+class NotificationVIEW(APIView):
     def get(self, request):
         global response_data
         if response_data:
@@ -301,16 +335,66 @@ class Notification(APIView):
             user_student = Students.objects.filter(user=user_object).first()
             if not user_student:
                 return Response({"message": "No student profile found for this user."}, status=404)
-            my_courses = studentsReg.objects.filter(student_id=user_student.id)
-            serializer = StudentRegSerializer(my_courses, many=True)
-            response = []
-            now = datetime.now()
-            for s in range(len(serializer.data)):
-                c = Courses.objects.get(code=serializer.data[s]['course_id'])
-                course_start_datetime = datetime.combine(date.today(), c.schedule_id.start_time)
-                difference = course_start_datetime - now - timedelta(minutes=10)
-                if difference.total_seconds() < 60:
-                    ser = NotificationSerializer({'course_name': c.name, 'start_time': c.schedule_id.start_time}, many=False)
-                    response.append(ser.data)
-            return Response(response, status=200)
+            
+            noteification=NotificationSerializer(data=Notification.objects.all(),many=True) 
+            noteification.is_valid()
+            return Response(noteification.data, status=200)
+        return Response({"message": "The user is not authenticated."}, status=401)
+
+
+class ReportVIEW(APIView):
+    def get(self, request):
+        global response_data
+        if response_data:
+            tags = [course.tag for course in Courses.objects.all()]
+            filtering_tags = []
+            for tag in tags:
+                if tag not in filtering_tags:
+                    filtering_tags.append(tag)
+
+            images_data = {}  # Dictionary to store images in Base64 format
+
+            for tag in filtering_tags:
+                courses = Courses.objects.filter(tag=tag).count()
+                students_reg = studentsReg.objects.filter(course_id__tag=tag).count()
+
+                # إعداد الرسم البياني
+                fig, ax = plt.subplots(figsize=(12, 8))
+
+                rects1 = ax.bar(['Number of Courses'], [courses], width=0.35, color='skyblue', label='Number of Courses')
+                rects2 = ax.bar(['Total Enrollments'], [students_reg], width=0.35, color='orange', label='Total Enrollments')
+
+                # إضافة بعض النصوص
+                ax.set_xlabel('Metrics')
+                ax.set_ylabel('Count')
+                ax.set_title(f'Number of Courses and Total Enrollments for {tag}')
+                ax.legend()
+
+                # إضافة التسميات للأعمدة
+                def autolabel(rects):
+                    for rect in rects:
+                        height = rect.get_height()
+                        ax.annotate('{}'.format(height),
+                                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                                    xytext=(0, 3),  # 3 points vertical offset
+                                    textcoords="offset points",
+                                    ha='center', va='bottom')
+
+                autolabel(rects1)
+                autolabel(rects2)
+
+                fig.tight_layout()
+
+                # حفظ الرسم في الذاكرة كصورة Base64
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                image_base64 = base64.b64encode(buf.read()).decode('utf-8')
+                buf.close()
+                plt.close(fig)
+
+                images_data[tag] = image_base64
+
+            return Response({"images": images_data}, status=200)
+
         return Response({"message": "The user is not authenticated."}, status=401)

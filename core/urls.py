@@ -9,7 +9,8 @@ urlpatterns = [
     path('courses/<int:pk>',views.CourseVIEW.as_view(),name='course'),
     path('select-course',views.CoursesSelect.as_view(),name='course'),
     path('search',views.Search.as_view(),name='search'),
-    path('notification',views.Notification.as_view(),name='notification'),
-    path('Update-course',views.UpdateVIEW.as_view(),name='update'),
+    path('notifications',views.NotificationVIEW.as_view(),name='notifications'),
+    path('Update-course/<int:pk>',views.UpdateVIEW.as_view(),name='update'),
+    path('report/',views.ReportVIEW.as_view(),name='report')
     # path('test',views.test.as_view(),name='test'),
 ]

@@ -5,14 +5,13 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 class Students(models.Model):
-    id = models.IntegerField(primary_key=True)
     user = models.ForeignKey(User,on_delete=models.CASCADE)
     email = models.CharField(max_length=100)
     def __str__(self):
         return self.user.username
     
 class CoruseSchedules(models.Model):
-    id = models.IntegerField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     days = models.CharField(max_length=100)
     start_time = models.TimeField()
     end_time = models.TimeField()
@@ -36,10 +35,10 @@ class Prerequisties(models.Model):
     course_prerequisite = models.ForeignKey(Courses, on_delete=models.CASCADE, related_name='requires')
 
 class studentsReg(models.Model):
-    id = models.IntegerField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     student_id= models.ForeignKey(Students, on_delete=models.CASCADE)
     course_id = models.ForeignKey(Courses, on_delete=models.CASCADE)
 
 class Notification(models.Model):
-    course_name = models.CharField(max_length=100)
-    start_time = models.TimeField()
+    title = models.CharField(max_length=100,blank=True)
+    message = models.TextField(blank=True)
